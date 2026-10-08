@@ -1,12 +1,19 @@
 # controller/detector.py
+import configparser
+import os
 from collections import deque, defaultdict
 
-WHITELIST = {"10.0.0.1", "10.0.0.4", "10.0.0.254"}
+_cfg = configparser.ConfigParser()
+_cfg.read(os.path.join(os.path.dirname(__file__), "..", "config.ini"))
 
-CONN_LIMIT, CONN_WINDOW = 15, 5      # Signal 1: 15 new conns in 5 s
-FAIL_LIMIT, FAIL_WINDOW = 5, 10      # Signal 2: 5 failed logins in 10 s
-BLOCK_SECS = 30
+WHITELIST = set(_cfg.get("network", "whitelist",
+                         fallback="10.0.0.1,10.0.0.4,10.0.0.254").split(","))
 
+CONN_LIMIT = _cfg.getint("detector", "conn_limit", fallback=15)
+CONN_WINDOW = _cfg.getint("detector", "conn_window", fallback=5)
+FAIL_LIMIT = _cfg.getint("detector", "fail_limit", fallback=5)
+FAIL_WINDOW = _cfg.getint("detector", "fail_window", fallback=10)
+BLOCK_SECS = _cfg.getint("detector", "block_secs", fallback=30)
 
 class Detector:
     def __init__(self, block_fn=None, log_fn=None):
