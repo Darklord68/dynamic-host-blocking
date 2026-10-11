@@ -1,4 +1,5 @@
-cat > topo/topo.py << 'EOF'
+
+
 #!/usr/bin/env python3
 from mininet.net import Mininet
 from mininet.node import RemoteController, OVSSwitch, Node
@@ -21,11 +22,10 @@ def run():
     for i in range(1, 5):
         h = net.addHost(f'h{i}', ip=f'10.0.0.{i}/24')
         net.addLink(h, s1)
-    connectToRootNS(net, s1, '10.0.0.254/24', ['10.0.0.0/24'])  # also starts the network
+    connectToRootNS(net, s1, '10.0.0.254/24', ['10.0.0.0/24'])
     CLI(net)
     net.stop()
 
 if __name__ == '__main__':
     setLogLevel('info')
     run()
-EOF
