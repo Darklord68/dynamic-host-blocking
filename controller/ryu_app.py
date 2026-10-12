@@ -6,6 +6,9 @@ from ryu.ofproto import ofproto_v1_3
 from ryu.lib.packet import packet, ethernet, ipv4, tcp
 from ryu.lib import hub
 
+from controller.detector import Detector              # NEW
+from controller.helper_server import make_server      # NEW
+
 WHITELIST = {'10.0.0.1', '10.0.0.4', '10.0.0.254'}
 SERVER_PORT = 9000
 BLOCK_PRIO = 100
@@ -22,8 +25,16 @@ class BlockingSwitch(app_manager.RyuApp):
         self.datapaths = {}
         self.blocked = {}
         self.conn_times = {}
-        self.detector = None   # Member 3 plugs detector here later
         self.logf = open('events.log', 'a')
+
+        # NEW: Member 3's detector and the port 9100 listener
+        self.detector = Detector(block_fn=self._detector_block,
+                                 log_fn=self.log_event)
+        self.helper = make_server(self.detector, self._detector_block,
+                                  self._detector_unblock, self.log_event,
+                                  "0.0.0.0", 9100)
+        hub.spawn(self.helper.serve_forever)
+
         hub.spawn(self._stats_loop)
 
     # ---------- logging ----------
@@ -69,6 +80,15 @@ class BlockingSwitch(app_manager.RyuApp):
                                  out_port=ofp.OFPP_ANY, out_group=ofp.OFPG_ANY))
         self.blocked.pop(ip, None)
         self.log_event('UNBLOCK', host=ip, reason='manual')
+
+    # ---------- NEW: hooks used by the detector and the port 9100 listener ----------
+    def _detector_block(self, ip, secs):
+        for dp in list(self.datapaths.values()):
+            self.block_host(dp, ip, secs)
+
+    def _detector_unblock(self, ip):
+        for dp in list(self.datapaths.values()):
+            self.unblock_host(dp, ip)
 
     # ---------- switch setup ----------
     @set_ev_cls(ofp_event.EventOFPSwitchFeatures, CONFIG_DISPATCHER)
@@ -132,6 +152,8 @@ class BlockingSwitch(app_manager.RyuApp):
             return
         ip = msg.match.get('ipv4_src')
         self.blocked.pop(ip, None)
+        if self.detector:                                  # NEW
+            self.detector.on_expire(ip)                    # NEW
         if msg.reason == msg.datapath.ofproto.OFPRR_HARD_TIMEOUT:
             self.log_event('EXPIRE', host=ip, reason='hard_timeout')
 
@@ -151,4 +173,3 @@ class BlockingSwitch(app_manager.RyuApp):
                 per[ip] = per.get(ip, 0) + st.packet_count
         for ip, pk in per.items():
             self.log_event('STATS', host=ip, packets=pk)
-
