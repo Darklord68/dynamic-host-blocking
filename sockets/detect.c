@@ -26,7 +26,7 @@ static HostEntry *find(const char *ip, int create) {
     return slot;
 }
 
-static int record_locked(HostEntry *e, time_t now) {
+static int record_locked(HostEntry *e, time_t now) {                /*Records a failure attempt for a host entry within a sliding time window.*/
     if (e->fail_count == 0 || now - e->window_start >= g_window) {
         e->fail_count = 1;
         e->window_start = now;
@@ -36,12 +36,12 @@ static int record_locked(HostEntry *e, time_t now) {
     return e->fail_count;
 }
 
-static int over_threshold(HostEntry *e, time_t now) {
+static int over_threshold(HostEntry *e, time_t now) {  /*Evaluates whether a host has breached the failure limit*/
     return !e->blocked && e->fail_count >= g_threshold &&
            now - e->window_start < g_window;
 }
 
-static int expire_locked(time_t now) {
+static int expire_locked(time_t now) { /*Scans the table and lifts blocks for hosts whose penalty duration has elapsed*/
     int n = 0;
     for (int i = 0; i < MAX_HOSTS; i++) {
         if (table[i].used && table[i].blocked && now >= table[i].blocked_until) {
