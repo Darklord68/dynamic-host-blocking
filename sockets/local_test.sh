@@ -50,6 +50,30 @@ echo "== two clients at once =="
 wait %3 %4 2>/dev/null; sleep 1
 [ "$(grep -c '<- OK' /tmp/m1_c1.log)" = "3" ] && [ "$(grep -c '<- OK' /tmp/m1_c2.log)" = "3" ] && check "two concurrent clients both served" yes || check "two concurrent clients both served" no
 
+echo "== server hardening and STATS (D2) =="
+ask() { exec 3<>/dev/tcp/127.0.0.1/9000; printf "$1" >&3; timeout 2 cat <&3; exec 3<&-; }
+R=$(ask 'LOGIN admin secret123\nLOGIN admin bad\nSTATS\nSTATS 127.0.0.1\nSTATS 10.9.9.9\nQUIT\n')
+echo "$R" | grep -q "^STATS connections=[0-9]* logins_ok=[1-9][0-9]* logins_failed=[1-9][0-9]*" && check "STATS shows connections and logins" yes || check "STATS shows connections and logins" no
+echo "$R" | grep -q "^STATS ip=127.0.0.1 connections=[1-9]" && check "STATS <ip> counts this client" yes || check "STATS <ip> counts this client" no
+echo "$R" | grep -q "^STATS ip=10.9.9.9 connections=0" && check "STATS <ip> is 0 for an unknown host" yes || check "STATS <ip> is 0 for an unknown host" no
+LONG=$(head -c 300 /dev/zero | tr '\0' A)
+R=$(ask "$LONG\nECHO still works\nQUIT\n")
+echo "$R" | grep -q "^ERR line too long" && check "line over 255 characters is rejected" yes || check "line over 255 characters is rejected" no
+echo "$R" | grep -q "^ECHO still works" && check "connection still works after a long line" yes || check "connection still works after a long line" no
+L=$(head -c 250 /dev/zero | tr '\0' B)
+ask "ECHO $L\nQUIT\n" | grep -q "^ECHO BBBB" && check "a 250 character line is accepted" yes || check "a 250 character line is accepted" no
+head -n 1 /tmp/m1_server.log | grep -qE '^\[[0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2}\.[0-9]{3}\] ' && check "log lines start with a millisecond timestamp" yes || check "log lines start with a millisecond timestamp" no
+
+echo "== idle timeout (second server, 2 s limit) =="
+./server 9001 127.0.0.1 9100 2 > /tmp/m1_idle.log 2>&1 & IV=$!
+sleep 1
+exec 4<>/dev/tcp/127.0.0.1/9001
+sleep 3.5
+exec 4<&-
+sleep 0.5
+grep -q "idle timeout" /tmp/m1_idle.log && check "silent client is disconnected after the idle limit" yes || check "silent client is disconnected after the idle limit" no
+kill $IV 2>/dev/null
+
 echo "== controller down =="
 kill $MC 2>/dev/null; sleep 1
 ./client 127.0.0.1 9000 normal 1 100 | grep -q "<- OK" && check "server still serves when controller is down" yes || check "server still serves when controller is down" no
