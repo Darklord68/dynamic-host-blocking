@@ -2,7 +2,9 @@
 """D2 benchmark: baseline (MODE none) vs dynamic blocking.
 
 Mock (any OS, no Mininet, writes FAKE data):  py benchmark.py --mock
-Real (Ubuntu VM, Ryu already running, repo root): sudo python3 benchmark.py --quick
+Real (Ubuntu VM, Ryu already running, repo root):
+    sudo python3 benchmark.py --quick --out results/results_quick.csv
+    sudo python3 benchmark.py --attackers 1 --rates 10 50 100
 """
 import argparse
 import csv
@@ -14,6 +16,7 @@ import socket
 import subprocess
 import sys
 import time
+from subprocess import PIPE, STDOUT
 
 COLUMNS = ["run_id", "mode", "attackers", "attack_rate", "rep",
            "time_to_block_s", "legit_attempts", "legit_success_pct",
@@ -92,13 +95,14 @@ def reset_controller(settle):
 
 
 def parse_summary(text):
-    """Summary line of the latency client: needs ok, failed, timeout, avg, p95.
-    TODO: adjust to Member 1's final output format."""
+    """Summary line of the latency client, for example:
+    summary attempts=5 ok=5 failed=0 timeout=0 success_pct=100.0 avg_ms=3.55 p95_ms=7.58 max_ms=7.58
+    Returns a dict of the name=value numbers, or {} if there is no summary."""
     for line in reversed(text.strip().splitlines()):
-        pairs = dict((k.lower(), float(v)) for k, v in
-                     re.findall(r"(\w+)\s*[=:]\s*([\d.]+)", line))
-        if "ok" in pairs:
-            return pairs
+        if not line.startswith("summary"):
+            continue
+        return {k.lower(): float(v) for k, v in
+                re.findall(r"(\w+)\s*[=:]\s*([\d.]+)", line)}
     return {}
 
 
@@ -176,7 +180,6 @@ def build_network():
 
 
 def real_run(net, mode, attackers, rate, rep, settle):
-    from subprocess import PIPE, STDOUT
     rid = run_id(mode, attackers, rate, rep)
     reset_controller(settle)
     reply = helper(f"MODE {mode}")
@@ -196,19 +199,25 @@ def real_run(net, mode, attackers, rate, rep, settle):
     procs = [net.get(h).popen([CLIENT, SERVER_IP, str(SERVER_PORT), "flood",
                                str(rate), str(ATTACK_SECS)], stdout=PIPE, stderr=STDOUT)
              for h in ATTACKERS[attackers]]
-    for p in procs:
-        p.communicate()
-    drops = drop_packets()                       # rule is still active here
+    outs = [p.communicate()[0].decode(errors="ignore") for p in procs]
+    starts = [int(m.group(1)) / 1000 for o in outs
+              for m in [re.search(r"start_epoch_ms=(\d+)", o)] if m]
+    if starts:
+        attack_start = min(starts)               # the client's own start time
+    drops = drop_packets()                       # the drop rule is still active here
     legit_out = legit.communicate()[0].decode(errors="ignore")
 
     vals = parse_summary(legit_out)
+    if not vals:
+        print("  warning: no summary line from the latency client. Output was:")
+        print("  " + (legit_out[-300:] or "(empty)").replace("\n", "\n  "))
     ok = vals.get("ok", 0)
-    attempts = int(ok + vals.get("failed", 0) + vals.get("timeout", 0))
+    attempts = int(vals.get("attempts", ok + vals.get("failed", 0) + vals.get("timeout", 0)))
     ips = [IPS[h] for h in ATTACKERS[attackers]]
     row = dict(run_id=rid, mode=mode, attackers=attackers, attack_rate=rate, rep=rep,
                legit_attempts=attempts,
                legit_success_pct=round(100 * ok / attempts, 1) if attempts else "",
-               legit_avg_ms=vals.get("avg", ""), legit_p95_ms=vals.get("p95", ""),
+               legit_avg_ms=vals.get("avg_ms", ""), legit_p95_ms=vals.get("p95_ms", ""),
                attack_conns_at_server=count_attacker_conns(slog, ips))
     if mode == "dynamic":
         t = first_block_time(offset, ips)
@@ -217,6 +226,12 @@ def real_run(net, mode, attackers, rate, rep, settle):
         else:
             row["time_to_block_s"] = round(t - attack_start, 3)
             row["drop_packets"] = drops
+            if row["time_to_block_s"] < 0:
+                print("  warning: negative time to block (clock or log mismatch)")
+    print(f"  attempts={row['legit_attempts']} success={row['legit_success_pct']}% "
+          f"avg={row['legit_avg_ms']}ms ttb={row.get('time_to_block_s', '-')}s "
+          f"attack_conns={row['attack_conns_at_server']} drops={row.get('drop_packets', '-')}",
+          flush=True)
     return row
 
 
@@ -248,6 +263,7 @@ def main():
             sys.exit("controller helper port 9100 not reachable: is Ryu running?")
         net = build_network()
 
+    os.makedirs("results", exist_ok=True)
     runs = list(combos(a.modes, a.attackers, a.rates, a.reps))
     try:
         for i, (mode, att, rate, rep) in enumerate(runs, 1):
