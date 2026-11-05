@@ -28,7 +28,7 @@ CTRL_IP = "10.0.0.254"
 HELPER = ("127.0.0.1", 9100)
 ATTACKERS = {1: ["h2"], 2: ["h2", "h5"]}
 IPS = {"h2": "10.0.0.2", "h3": "10.0.0.3", "h5": "10.0.0.5"}
-LEGIT_COUNT, LEGIT_DELAY_MS = 100, 250      # about 25 s of legit traffic
+LEGIT_COUNT, LEGIT_DELAY_MS = 50, 500      # about 25 s of legit traffic
 ATTACK_START_S, ATTACK_SECS = 3, 20
 CLIENT = "./sockets/client"
 
@@ -252,6 +252,9 @@ def main():
     out = a.out or ("results/results_mock.csv" if a.mock else "results/results.csv")
     if a.mock and os.path.basename(out) == "results.csv":
         sys.exit("refusing to write mock data into results.csv")
+
+    if os.path.exists(out) and os.path.getsize(out) > 0:
+        sys.exit(f"Output file already contains data: {out}. Rename it first or choose a fresh --out filename.")
 
     net = None
     if not a.mock:
