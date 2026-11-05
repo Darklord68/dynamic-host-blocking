@@ -287,25 +287,6 @@ class BlockingSwitch(app_manager.RyuApp):
                     idle=10
                 )
 
-                # Reverse-direction flow: send the reply back
-                # through the port on which the original packet arrived.
-                rmatch = p.OFPMatch(
-                    eth_type=0x0800,
-                    ipv4_src=ip.dst,
-                    ipv4_dst=ip.src,
-                    ip_proto=6,
-                    tcp_src=t.dst_port,
-                    tcp_dst=t.src_port
-                )
-
-                self.add_flow(
-                    dp,
-                    FLOW_PRIO,
-                    rmatch,
-                    [p.OFPActionOutput(in_port)],
-                    idle=10
-                )
-
         self.packet_out(
             dp,
             msg,
